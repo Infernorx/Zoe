@@ -1,0 +1,337 @@
+"""
+medical_ai_agent.py
+pip install -U \
+   ibm-watsonx-ai python-dotenv fastapi uvicorn pydantic pdfplumber pytesseract \
+   pillow opencv-python unstructured[all-docs] python-multipart
+
+2) Install Tesseract OCR on your OS (for pytesseract):
+   - Ubuntu: sudo apt-get update && sudo apt-get install tesseract-ocr
+   - macOS (brew): brew install tesseract
+   - Windows: https://github.com/UB-Mannheim/tesseract/wiki
+
+3) Create a .env file with your IBM watsonx.ai credentials:
+   WX_API_KEY=your_api_key
+   WX_PROJECT_ID=your_project_id   # or WX_SPACE_ID if you use a Space
+   WX_BASE_URL=https://us-south.ml.cloud.ibm.com  # pick your region
+   WX_MODEL_ID=ibm-granite/granite-3.3-8b-instruct  # or another Granite instruct model
+
+   # Optional phone notification mock target (no external SMS is sent by this demo)
+   DEFAULT_PATIENT_PHONE=+919999999999
+
+Run
+---
+   uvicorn medical_ai_agent:app --reload --port 8000
+
+Then POST a file:
+   curl -X POST "http://127.0.0.1:8000/process_report" \
+     -F "patient_name=Ramesh" \
+     -F "patient_age=52" \
+     -F "patient_phone=+919876543210" \
+     -F "file=@/path/to/report.pdf"
+
+"""
+from _future_ import annotations
+
+import os
+import io
+import re
+import json
+import uuid
+import base64
+import pdfplumber
+import pytesseract
+import cv2  # type: ignore
+from PIL import Image
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
+
+from fastapi import FastAPI, File, UploadFile, Form
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+# IBM watsonx.ai SDK
+from ibm_watsonx_ai.foundation_models import ModelInference
+from ibm_watsonx_ai import Credentials
+
+# Unstructured handles messy PDFs/office docs (tables, layout)
+from unstructured.partition.auto import partition
+
+# ---------- Env & Globals ----------
+load_dotenv()
+
+WX_API_KEY = os.getenv("WX_API_KEY")
+WX_PROJECT_ID = os.getenv("WX_PROJECT_ID")
+WX_SPACE_ID = os.getenv("WX_SPACE_ID")
+WX_BASE_URL = os.getenv("WX_BASE_URL", "https://us-south.ml.cloud.ibm.com")
+WX_MODEL_ID = os.getenv("WX_MODEL_ID", "ibm-granite/granite-3.3-8b-instruct")
+
+DEFAULT_PATIENT_PHONE = os.getenv("DEFAULT_PATIENT_PHONE", "+911234567890")
+TIMEZONE_OFFSET_IST = 5.5  # Asia/Kolkata (hours)
+
+# Basic sanity checks
+if not WX_API_KEY:
+    print("[WARN] WX_API_KEY is not set. LLM calls will fail. Populate .env to enable Granite.")
+
+# ---------- Data Schemas ----------
+class AIExtraction(BaseModel):
+    raw_text: str
+    patient_info: Dict[str, Any] = Field(default_factory=dict)
+    sections: Dict[str, str] = Field(default_factory=dict)
+
+class AISummary(BaseModel):
+    doctor_summary: str
+    patient_summary: str
+
+class AIDecision(BaseModel):
+    urgency: str  # OK | URGENT | CRITICAL
+    reasons: List[str] = Field(default_factory=list)
+    key_findings: Dict[str, Any] = Field(default_factory=dict)
+
+class Appointment(BaseModel):
+    patient_name: str
+    when_local: str
+    location: str = "OPD-2, Internal Medicine"
+    doctor: str = "Dr. Gupta"
+
+class AgentOutput(BaseModel):
+    extraction: AIExtraction
+    summary: AISummary
+    decision: AIDecision
+    appointment: Optional[Appointment] = None
+    notifications: List[str] = Field(default_factory=list)
+
+# ---------- Utilities ----------
+
+def _now_ist() -> datetime:
+    return datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET_IST)
+
+def guess_file_type(filename: str) -> str:
+    ext = filename.lower().split(".")[-1]
+    if ext in {"png", "jpg", "jpeg", "tif", "tiff", "bmp"}:
+        return "image"
+    if ext in {"pdf"}:
+        return "pdf"
+    return "text"
+
+# ---------- Ingestion & OCR ----------
+
+def extract_text_from_pdf(file_bytes: bytes) -> str:
+    # Try unstructured for robust parsing (layout aware)
+    try:
+        with io.BytesIO(file_bytes) as fb:
+            elements = partition(file=fb)  # Auto strategy: VLM/HighRes/Fast
+        chunks = [el.text for el in elements if hasattr(el, "text") and el.text]
+        if chunks:
+            return "\n".join(chunks)
+    except Exception as e:
+        print(f"[WARN] Unstructured parse failed, falling back to pdfplumber: {e}")
+
+    # Fallback: pdfplumber (digital PDFs)
+    text = []
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text.append(page.extract_text() or "")
+    return "\n".join(text).strip()
+
+def extract_text_from_image(file_bytes: bytes) -> str:
+    # Use OpenCV preprocessing + Tesseract OCR
+    nparr = np_from_bytes(file_bytes)
+    gray = cv2.cvtColor(nparr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    # Denoise lightly
+    gray = cv2.medianBlur(gray, 3)
+    pil_img = Image.fromarray(gray)
+    return pytesseract.image_to_string(pil_img)
+
+def np_from_bytes(b: bytes):
+    import numpy as np  # local import to keep global deps tidy
+    nparr = np.frombuffer(b, np.uint8)
+    return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+# ---------- Lightweight structure detection ----------
+
+PATIENT_INFO_PATTERN = re.compile(
+    r"(?is)Patient\s*Name\s*[:\-]?\s*(?
+from flask import Flask, render_template, request, redirect, url_for
+import sqlite3, datetime, os, smtplib
+from email.mime.text import MIMEText
+
+app = Flask(_name_)
+
+# -------------------------
+# DATABASE SETUP
+# -------------------------
+def init_db():
+    conn = sqlite3.connect("healthcare.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS doctors
+                 (id INTEGER PRIMARY KEY, name TEXT, specialization TEXT, available INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS patients
+                 (id INTEGER PRIMARY KEY, name TEXT, symptoms TEXT, urgency TEXT, doctor_id INTEGER, appt_date TEXT, email TEXT, phone TEXT)''')
+    conn.commit()
+    conn.close()
+
+# -------------------------
+# AGENT LOGIC
+# -------------------------
+def assess_urgency(symptoms):
+    urgent_keywords = ["chest pain", "bleeding", "breathless"]
+    for word in urgent_keywords:
+        if word in symptoms.lower():
+            return "Urgent"
+    return "Normal"
+
+# Simulated notification system (Email + SMS/WhatsApp printout)
+def notify_patient(email, phone, message):
+    try:
+        if email:
+            msg = MIMEText(message)
+            msg['Subject'] = 'Healthcare Appointment Notification'
+            msg['From'] = 'noreply@healthcare.com'
+            msg['To'] = email
+
+            # Try local SMTP (works if sendmail/postfix is running)
+            with smtplib.SMTP('localhost') as server:
+                server.send_message(msg)
+        print(f"[EMAIL] Sent to {email if email else 'N/A'}: {message}")
+    except Exception as e:
+        print(f"[ERROR] Email notification failed: {e}")
+
+    # Simulate SMS/WhatsApp
+    if phone:
+        print(f"[SMS/WhatsApp] Sent to {phone}: {message}")
+    else:
+        print("[SMS/WhatsApp] No phone number provided.")
+
+def book_appointment(patient_name, symptoms, email, phone):
+    urgency = assess_urgency(symptoms)
+    conn = sqlite3.connect("healthcare.db")
+    c = conn.cursor()
+    # Pick first available doctor
+    c.execute("SELECT id, name FROM doctors WHERE available=1 LIMIT 1")
+    doctor = c.fetchone()
+    if doctor:
+        doctor_id, doctor_name = doctor
+        appt_date = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        c.execute("INSERT INTO patients (name, symptoms, urgency, doctor_id, appt_date, email, phone) VALUES (?,?,?,?,?,?,?)",
+                  (patient_name, symptoms, urgency, doctor_id, appt_date, email, phone))
+        conn.commit()
+        conn.close()
+        message = f"Appointment booked with {doctor_name} on {appt_date}. Urgency: {urgency}."
+        notify_patient(email, phone, message)
+        return message
+    else:
+        conn.close()
+        return "No doctor available. Please try later."
+
+# -------------------------
+# ROUTES
+# -------------------------
+@app.route('/')
+def index():
+    return render_template("index.html")
+
+@app.route('/book', methods=['POST'])
+def book():
+    name = request.form['name']
+    symptoms = request.form['symptoms']
+    email = request.form['email']
+    phone = request.form['phone']
+    msg = book_appointment(name, symptoms, email, phone)
+    return render_template("message.html", message=msg)
+
+@app.route('/dashboard')
+def dashboard():
+    conn = sqlite3.connect("healthcare.db")
+    c = conn.cursor()
+    c.execute("SELECT p.id, p.name, p.symptoms, p.urgency, d.name, p.appt_date, p.email, p.phone FROM patients p LEFT JOIN doctors d ON p.doctor_id = d.id")
+    patients = c.fetchall()
+    c.execute("SELECT * FROM doctors")
+    doctors = c.fetchall()
+    conn.close()
+    return render_template("dashboard.html", patients=patients, doctors=doctors)
+
+# -------------------------
+# CREATE BASIC HTML TEMPLATES IF NOT EXISTS
+# -------------------------
+def create_templates():
+    os.makedirs("templates", exist_ok=True)
+
+    with open("templates/index.html", "w") as f:
+        f.write("""
+        <html>
+        <head><title>Healthcare Agent</title></head>
+        <body>
+            <h2>Book an Appointment</h2>
+            <form action='/book' method='POST'>
+                Name: <input type='text' name='name' required><br><br>
+                Email: <input type='email' name='email' required><br><br>
+                Phone: <input type='text' name='phone' placeholder='+91XXXXXXXXXX'><br><br>
+                Symptoms: <textarea name='symptoms' required></textarea><br><br>
+                <input type='submit' value='Book Appointment'>
+            </form>
+            <br>
+            <a href='/dashboard'>Go to Dashboard</a>
+        </body>
+        </html>
+        """)
+
+    with open("templates/message.html", "w") as f:
+        f.write("""
+        <html>
+        <head><title>Message</title></head>
+        <body>
+            <h2>{{ message }}</h2>
+            <a href='/'>Back</a> | <a href='/dashboard'>Dashboard</a>
+        </body>
+        </html>
+        """)
+
+    with open("templates/dashboard.html", "w") as f:
+        f.write("""
+        <html>
+        <head><title>Dashboard</title></head>
+        <body>
+            <h2>Doctor Summary</h2>
+            <ul>
+            {% for d in doctors %}
+                <li>{{ d[1] }} - {{ d[2] }} (Available: {{ 'Yes' if d[3]==1 else 'No' }})</li>
+            {% endfor %}
+            </ul>
+
+            <h2>Patient Summary</h2>
+            <table border="1">
+                <tr><th>ID</th><th>Name</th><th>Symptoms</th><th>Urgency</th><th>Doctor</th><th>Appt Date</th><th>Email</th><th>Phone</th></tr>
+                {% for p in patients %}
+                <tr>
+                    <td>{{ p[0] }}</td>
+                    <td>{{ p[1] }}</td>
+                    <td>{{ p[2] }}</td>
+                    <td>{{ p[3] }}</td>
+                    <td>{{ p[4] }}</td>
+                    <td>{{ p[5] }}</td>
+                    <td>{{ p[6] }}</td>
+                    <td>{{ p[7] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+
+            <br><a href='/'>Back to Booking</a>
+        </body>
+        </html>
+        """)
+
+# -------------------------
+# RUN APP
+# -------------------------
+if _name_ == "_main_":
+    init_db()
+    create_templates()
+    # Add demo doctor
+    conn = sqlite3.connect("healthcare.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO doctors (id, name, specialization, available) VALUES (1, 'Dr. Mehta', 'Cardiologist', 1)")
+    conn.commit()
+    conn.close()
+    app.run(debug=True)
