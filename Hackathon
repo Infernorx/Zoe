@@ -153,6 +153,7 @@ def np_from_bytes(b: bytes):
 
 PATIENT_INFO_PATTERN = re.compile(
     r"(?is)Patient\s*Name\s*[:\-]?\s*(?
+##-----UI Designing------
 from flask import Flask, render_template, request, redirect, url_for
 import sqlite3, datetime, os, smtplib
 from email.mime.text import MIMEText
