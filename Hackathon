@@ -1,5 +1,21 @@
 """
 medical_ai_agent.py
+End‑to‑end demo of an AI agent that:
+  1) Ingests a medical report (PDF/image/text) and extracts text
+  2) Uses IBM Granite (via watsonx.ai Python SDK) to interpret the report
+  3) Produces dual summaries (doctor + patient)
+  4) Triage (OK / URGENT / CRITICAL) with simple rules + LLM sanity check
+  5) Auto‑books a follow‑up slot (mock calendar) and notifies the patient (mock SMS)
+  6) Exposes a FastAPI endpoint for hospitals to upload reports
+
+⚠ Notes
+- This is a self‑contained reference implementation to get you running locally.
+- Replace mocks with your hospital systems (EMR, calendar, SMS gateway).
+- Requires Python 3.10+.
+
+Setup
+-----
+
 pip install -U \
    ibm-watsonx-ai python-dotenv fastapi uvicorn pydantic pdfplumber pytesseract \
    pillow opencv-python unstructured[all-docs] python-multipart
